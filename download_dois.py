@@ -3,6 +3,7 @@ import numpy as np
 import os
 import csv
 from habanero import Crossref
+import xml.etree.ElementTree as ET
 
 def prepare_folders(output_folder='papers',temp_folder='temp'):
 
@@ -20,36 +21,58 @@ def prepare_folders(output_folder='papers',temp_folder='temp'):
             
 	return output_folder
 
-def load_data_from_csv(path,doi_or_title,seperator=','):
-    if doi_or_title == 'doi':
-        with open(path) as f:
-            dois = f.read().splitlines()
 
-    elif doi_or_title == 'title':
+def fetch_entry_in_xml(root):
+    for ii,item in enumerate(root.iter('record')):
+        yield item
         
-        # read lines from csv file
-        with open(path) as csvfile:
-            items = []
-            #item = f.read().splitlines()
-            reader = csv.reader(csvfile, delimiter='|', quotechar='<')
-            for row in reader:
-                items.append(row)
-        items.pop(0) #removes header
-        
-        cr = Crossref()
-        dois = items.copy()
-        # link titles with dois
-        for ii,item in enumerate(items):
-            # goes thru all the papers and checks via crossref
-            query_result = cr.works(query = item[2] + ' ' + item[3],limit=3)
+
+def fetch_titles_from_xml(root):
+    for ii,item in enumerate(root.iter('titles')):
+        for jj,sub_item in enumerate(item.iter('title')):
+            for jj,subsub_item in enumerate(item.iter('style')):
+                return subsub_item.text       
             
-            title = query_result['message']['items'][0]['title'][0]
-            doi = query_result['message']['items'][0]['DOI']
-            print(title)
-            print(doi)
-            dois[ii] = doi
-                
+            
+def fetch_authors_from_xml(root):
+    for ii,item in enumerate(root.iter('contributors')):
+        for jj,sub_item in enumerate(item.iter('authors')):
+            authors = []
+            for kk,subsub_item in enumerate(sub_item.iter('author')):
+                for ll,subsubsub_item in enumerate(subsub_item.iter('style')):
+                    authors.append(subsubsub_item.text)
+            return authors
+        
+        
+def fetch_journal_from_xml(root):
+    for ii,item in enumerate(root.iter('titles')):
+        for jj,sub_item in enumerate(item.iter('secondary-title')):
+            for jj,subsub_item in enumerate(sub_item.iter('style')):
+                return subsub_item.text
+            
+            
+def flatten(list_of_strings):
+    string = ""
+    for item in list_of_strings:
+        string += " "+item
+    return string
+
+
+def load_data_from_xml(path):
+    tree = ET.parse(path)
+    root = tree.getroot()
+
+    data = fetch_entry_in_xml(root)
+    record = []
+    for ii,entry in enumerate(data):
+        title = fetch_titles_from_xml(entry)
+        authors = fetch_authors_from_xml(entry)
+        journal = fetch_journal_from_xml(entry)
+        record.append({"title": title,"authors": authors,"journal": journal})
+    
+    dois = fetch_dois_from_crossref(record)    
     return dois
+
 
 def fetch_dois_from_crossref(records):
     cr = Crossref()
@@ -57,14 +80,20 @@ def fetch_dois_from_crossref(records):
     
     # link titles with dois
     for ii,item in enumerate(records):
+
         # goes thru all the papers and checks via crossref
-        query_result = cr.works(query = item[2] + ' ' + item[3],limit=3)
+        query = '"' + item["title"] + '"'\
+              + " " + flatten(item["authors"])
+        print(query)
+        query_result = cr.works(query = query,limit=3)
 
         title = query_result['message']['items'][0]['title'][0]
         doi = query_result['message']['items'][0]['DOI']
         print(title)
         print(doi)
         dois[ii] = doi
+    
+    return dois
 
 
 def download_from_scihub(DOIs,output_folder='papers',temp_folder='temp'):
@@ -98,14 +127,14 @@ def clean_up(temp_folder='temp'):
         pass
 
 
-def download_papers(path,doi_or_title,seperator):
+def download_papers(path):
 
     prepare_folders()
-    DOIs = load_data_from_csv(path,doi_or_title,seperator='|')
-    download_from_scihub(DOIs,output_folder='papers',temp_folder='temp')
+    dois = load_data_from_xml(path)
+    download_from_scihub(dois,output_folder='papers',temp_folder='temp')
     clean_up()
 
 
 if __name__ == "__main__":
-	path = "Articles_P37916_0418_A5420.csv"
-	download_papers(path,'title','|')
+	path = "Articles_P37916_0421_A5483.xml"
+	download_papers(path)

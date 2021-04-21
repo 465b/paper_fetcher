@@ -1,2 +1,6 @@
 /papers
 /temp
+*.csv
+*.xml
+*.ipynb
+/.ipynb_checkpoints
