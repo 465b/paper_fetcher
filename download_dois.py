@@ -1,9 +1,20 @@
-from scidownl.scihub import SciHub
-import numpy as np
 import os
 import csv
+
+import numpy as np
 from habanero import Crossref
-import xml.etree.ElementTree as ET
+from scidownl.scihub import SciHub
+from termcolor import colored
+
+from xml_reader import load_data_from_xml
+from csv_reader import load_data_from_csv
+
+
+STD_INFO = colored('[INFO] ', 'green')
+STD_ERROR = colored('[ERROR] ', 'red')
+STD_WARNING = colored('[WARNING] ', 'yellow')
+STD_INPUT = colored('[INPUT] ', 'blue')
+
 
 def prepare_folders(output_folder='papers',temp_folder='temp'):
 
@@ -20,72 +31,32 @@ def prepare_folders(output_folder='papers',temp_folder='temp'):
 			os.remove(os.path.join(temp_folder,file))
 			
 	return output_folder
-
-
-def fetch_entry_in_xml(root):
-	for ii,item in enumerate(root.iter('record')):
-		yield item
-		
-
-def fetch_titles_from_xml(root):
-	for ii,item in enumerate(root.iter('titles')):
-		for jj,sub_item in enumerate(item.iter('title')):
-			for jj,subsub_item in enumerate(item.iter('style')):
-				return subsub_item.text       
-			
-			
-def fetch_authors_from_xml(root):
-	for ii,item in enumerate(root.iter('contributors')):
-		for jj,sub_item in enumerate(item.iter('authors')):
-			authors = []
-			for kk,subsub_item in enumerate(sub_item.iter('author')):
-				for ll,subsubsub_item in enumerate(subsub_item.iter('style')):
-					authors.append(subsubsub_item.text)
-			return authors
-		
-		
-def fetch_journal_from_xml(root):
-	for ii,item in enumerate(root.iter('titles')):
-		for jj,sub_item in enumerate(item.iter('secondary-title')):
-			for jj,subsub_item in enumerate(sub_item.iter('style')):
-				return subsub_item.text
 			
 			
 def flatten(list_of_strings):
-	string = ""
-	for item in list_of_strings:
-		string += " "+item
-	return string
-
-
-def load_data_from_xml(path):
-	tree = ET.parse(path)
-	root = tree.getroot()
-
-	data = fetch_entry_in_xml(root)
-	for ii,entry in enumerate(data):
-		title = fetch_titles_from_xml(entry)
-		authors = fetch_authors_from_xml(entry)
-		journal = fetch_journal_from_xml(entry)
-		yield {"title": title,"authors": authors,"journal": journal}
+	if type(list_of_strings) == list:
+		string = ""
+		for item in list_of_strings:
+			string += " "+item
+		return string
+	else:
+		return list_of_strings
 
 
 def fetch_doi_from_crossref(item):
+	""" link titles with dois """
 	cr = Crossref()
 	
-	# link titles with dois
 
 	# goes thru all the papers and checks via crossref
 	query = '"' + item["title"] + '"'\
 	+ " " + flatten(item["authors"])
-	print(query)
+	print(STD_INFO + query)
 	query_result = cr.works(query = query,limit=3)
 
 	title = query_result['message']['items'][0]['title'][0]
 	doi = query_result['message']['items'][0]['DOI']
-	print(title)
-	print(doi)
-	return doi
+	return doi,title
 
 
 def download_from_scihub(doi,output_folder='papers',temp_folder='temp',
@@ -103,15 +74,24 @@ def download_from_scihub(doi,output_folder='papers',temp_folder='temp',
 		return 0,doi
 	
 	except AttributeError:
-		print(f'----------------------')
-		print(f'[INFO] Paper {doi} not found.')
-		print(f'----------------------')
+		print(f'{STD_WARNING} Paper {doi} not found.')
 		return 404,doi
 
 	except KeyError:
 		print(doi+" available on libgen")
 		return 101,doi
 
+
+def comparte_titles(data_title,query_title,verbose=True):
+	if data_title == query_title:
+		if verbose == True:
+			print(STD_INFO + "Sucessfull crossref lookup. Titles match")
+		return 0
+	else:
+		if verbose == True:
+			print(STD_WARNING + "Crossref lookup failed. Titles not matched")
+		return 1
+	
 
 
 def clean_up(temp_folder='temp'):
@@ -120,29 +100,51 @@ def clean_up(temp_folder='temp'):
 	except:
 		pass
 
+def load_data(path):
+	if path[-3:] == 'xml':
+		record = load_data_from_xml(path)
+	elif path[-3:] == 'csv':
+		record = load_data_from_csv(path)
+	return record
 
 def download_papers(path,naming_scheme='doi'):
 
-	scihub_invalid_dois = []
-	scihub_valid_dois = []
+	successful_lookups = []
+	unsuccessful_lookups = []
 	
 	prepare_folders()
-	record = load_data_from_xml(path)
-	for item in record:
-		doi = fetch_doi_from_crossref(item)
-		output_code, doi = download_from_scihub(doi)
-		if output_code == 0:
-			scihub_valid_dois.append(doi)
-		else:
-			scihub_invalid_dois.append(doi)
+
+	record = load_data(path)
+	
+	for ii,item in enumerate(record):
+		print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
 		
-	with open('invalid_dois.csv','w') as g:
+		doi,cr_title = fetch_doi_from_crossref(item)
+		cr_output_code = comparte_titles(item['title'],cr_title)
+		
+		if cr_output_code == 0:
+			# doi found - trying to fecth from scihub
+			scihub_output_code, doi = download_from_scihub(doi)
+			if scihub_output_code == 0:
+				successful_lookups.append({'title': item['title']})
+			else:
+				unsuccessful_lookups.append({'error': 'SciHub',
+											'title': item['title']})
+		
+		if cr_output_code == 1:
+			# doi not found - skipping download attempt
+			unsuccessful_lookups.append({'error': 'CrossRef',
+										 'title': item['title']})
+			
+
+	with open('unsuccessful_lookups.csv','w') as g:
 		write = csv.writer(g)
-		write.writerows([scihub_invalid_dois])
+		for item in unsuccessful_lookups:
+			write.writerow([item['error']+', '+item['title']])
 	
 	clean_up()
 
 
 if __name__ == "__main__":
-	path = "Articles_P37916_0421_A5483.xml"
+	path = "demo_data/Articles_P37916_0430_A5795.csv"
 	download_papers(path,naming_scheme='title')
