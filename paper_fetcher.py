@@ -1,5 +1,6 @@
 import os
 import csv
+import time
 
 import numpy as np
 from habanero import Crossref
@@ -16,10 +17,16 @@ STD_WARNING = colored('[WARNING] ', 'yellow')
 STD_INPUT = colored('[INPUT] ', 'blue')
 
 
-def prepare_folders(output_folder='papers',temp_folder='temp'):
+def prepare_folders(output_folder='papers',mismatch_folder='mismatch',
+					temp_folder='temp'):
 
 	try:
 		os.mkdir(output_folder)
+	except FileExistsError:
+		pass
+
+	try:
+		os.mkdir(mismatch_folder)
 	except FileExistsError:
 		pass
 
@@ -52,15 +59,25 @@ def fetch_doi_from_crossref(item):
 	query = '"' + item["title"] + '"'\
 	+ " " + flatten(item["authors"])
 	print(STD_INFO + query)
-	query_result = cr.works(query = query,limit=3)
+	server_reached = False
+	while server_reached == False:
+		try:
+			query_result = cr.works(query = query,limit=3)
+			server_reached = True
+		except:
+			#HTTPError (Service Unavailable)
+			print(STD_WARNING + "CrossRef server unavailable. Retry in 5 seconds")
+			time.sleep(5)
 
 	title = query_result['message']['items'][0]['title'][0]
 	doi = query_result['message']['items'][0]['DOI']
 	return doi,title
 
 
-def download_from_scihub(doi,output_folder='papers',temp_folder='temp',
-						 naming_scheme='doi'):
+def download_from_scihub(item,naming_scheme='doi',
+						 output_folder='papers',temp_folder='temp'):
+
+	doi = item['doi']
 	try:
 		SciHub(doi,temp_folder).download(choose_scihub_url_index=3)
 		path = os.getcwd()
@@ -68,30 +85,31 @@ def download_from_scihub(doi,output_folder='papers',temp_folder='temp',
 		if naming_scheme == 'doi':
 			for filename in filenames:
 				os.rename(os.path.join(path,temp_folder, filename),
-				os.path.join(path,output_folder,doi.replace('/','_')))
+					os.path.join(path,output_folder,doi.replace('/','_')))
 		elif naming_scheme =='title':
-			pass
-		return 0,doi
+			for filename in filenames:
+				os.rename(os.path.join(path,temp_folder, filename),
+					os.path.join(path,output_folder,item['title']))
+		return 0
 	
 	except AttributeError:
 		print(f'{STD_WARNING} Paper {doi} not found.')
-		return 404,doi
+		return 404
 
 	except KeyError:
 		print(doi+" available on libgen")
-		return 101,doi
+		return 101
 
 
 def comparte_titles(data_title,query_title,verbose=True):
 	if data_title == query_title:
 		if verbose == True:
-			print(STD_INFO + "Sucessfull crossref lookup. Titles match")
+			print(STD_INFO + "Successfull crossref lookup. Titles match")
 		return 0
 	else:
 		if verbose == True:
 			print(STD_WARNING + "Crossref lookup failed. Titles not matched")
 		return 1
-	
 
 
 def clean_up(temp_folder='temp'):
@@ -100,6 +118,7 @@ def clean_up(temp_folder='temp'):
 	except:
 		pass
 
+
 def load_data(path):
 	if path[-3:] == 'xml':
 		record = load_data_from_xml(path)
@@ -107,35 +126,50 @@ def load_data(path):
 		record = load_data_from_csv(path)
 	return record
 
-def download_papers(path,naming_scheme='doi'):
+
+def download_papers(path,naming_scheme='doi',force_download=False,
+					output_folder='papers',mismatch_folder='mismatch',
+					temp_folder='temp'):
 
 	successful_lookups = []
 	unsuccessful_lookups = []
 	
-	prepare_folders()
+	prepare_folders(output_folder,mismatch_folder,temp_folder)
 
 	record = load_data(path)
 	
 	for ii,item in enumerate(record):
 		print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
 		
-		doi,cr_title = fetch_doi_from_crossref(item)
-		cr_output_code = comparte_titles(item['title'],cr_title)
+		item['doi'],item['cr_title'] = fetch_doi_from_crossref(item)
+		item['cr_output_code'] = comparte_titles(item['title'],item['cr_title'])
 		
-		if cr_output_code == 0:
-			# doi found - trying to fecth from scihub
-			scihub_output_code, doi = download_from_scihub(doi)
+		if item['cr_output_code'] == 0:
+			# doi found - trying to fetch from scihub
+			scihub_output_code = download_from_scihub(item,naming_scheme,
+													output_folder,temp_folder)
+			
 			if scihub_output_code == 0:
 				successful_lookups.append({'title': item['title']})
 			else:
 				unsuccessful_lookups.append({'error': 'SciHub',
 											'title': item['title']})
 		
-		if cr_output_code == 1:
+		if item['cr_output_code'] == 1:
+			if force_download == False:
 			# doi not found - skipping download attempt
-			unsuccessful_lookups.append({'error': 'CrossRef',
-										 'title': item['title']})
-			
+				unsuccessful_lookups.append({'error': 'CrossRef',
+											 'title': item['title']})
+			else:	
+				scihub_output_code = \
+					download_from_scihub(item,naming_scheme,
+						output_folder=mismatch_folder,temp_folder=temp_folder)
+											
+				if scihub_output_code == 0:
+					successful_lookups.append({'title': item['title']})
+				else:
+					unsuccessful_lookups.append({'error': 'SciHub',
+												'title': item['title']})
 
 	with open('unsuccessful_lookups.csv','w') as g:
 		write = csv.writer(g)
@@ -145,6 +179,7 @@ def download_papers(path,naming_scheme='doi'):
 	clean_up()
 
 
+
 if __name__ == "__main__":
 	path = "demo_data/Articles_P37916_0430_A5795.csv"
-	download_papers(path,naming_scheme='title')
+	download_papers(path,naming_scheme='title',force_download=True)
