@@ -1,6 +1,10 @@
 /papers
 /temp
+/mismatch
+/__pycache__
+
 *.csv
 *.xml
 *.ipynb
+
 /.ipynb_checkpoints

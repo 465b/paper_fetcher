@@ -131,17 +131,24 @@ def download_papers(path,naming_scheme='doi',force_download=False,
 					output_folder='papers',mismatch_folder='mismatch',
 					temp_folder='temp'):
 
-	successful_lookups = []
-	unsuccessful_lookups = []
-	
+
+	#prepare folder structure for file storage and renaming
 	prepare_folders(output_folder,mismatch_folder,temp_folder)
 
+	# load the data set containting the papers which shall be downloaded
 	record = load_data(path)
 	
 	for ii,item in enumerate(record):
 		print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
+
+		# logging
+		g = open('unsuccessful_lookups.csv','a')
+		write = csv.writer(g)
+
 		
 		item['doi'],item['cr_title'] = fetch_doi_from_crossref(item)
+		# this is a very basic way to check if the papers match
+		# doesn't work (when it should) e.g if any special characters are present
 		item['cr_output_code'] = comparte_titles(item['title'],item['cr_title'])
 		
 		if item['cr_output_code'] == 0:
@@ -149,33 +156,27 @@ def download_papers(path,naming_scheme='doi',force_download=False,
 			scihub_output_code = download_from_scihub(item,naming_scheme,
 													output_folder,temp_folder)
 			
-			if scihub_output_code == 0:
-				successful_lookups.append({'title': item['title']})
-			else:
-				unsuccessful_lookups.append({'error': 'SciHub',
-											'title': item['title']})
+			# writes down that paper couldn't be downloaded
+			if scihub_output_code == 1:
+				write.writerow(['SciHub',item['title']])
 		
 		if item['cr_output_code'] == 1:
-			if force_download == False:
-			# doi not found - skipping download attempt
-				unsuccessful_lookups.append({'error': 'CrossRef',
-											 'title': item['title']})
-			else:	
+			# writes down that paper wasn't found on crossref
+			write.writerow(['CrossRef',item['title']])
+			if force_download == True:
 				scihub_output_code = \
 					download_from_scihub(item,naming_scheme,
 						output_folder=mismatch_folder,temp_folder=temp_folder)
-											
-				if scihub_output_code == 0:
-					successful_lookups.append({'title': item['title']})
-				else:
-					unsuccessful_lookups.append({'error': 'SciHub',
-												'title': item['title']})
+			
+				# writes down that paper couldn't be downloaded
+				if scihub_output_code == 1:
+					write.writerow(['SciHub',item['title']])
+			else:	
+				# doi not found - skipping download attempt
+				pass
 
-	with open('unsuccessful_lookups.csv','w') as g:
-		write = csv.writer(g)
-		for item in unsuccessful_lookups:
-			write.writerow([item['error']+', '+item['title']])
-	
+		g.close()
+
 	clean_up()
 
 
