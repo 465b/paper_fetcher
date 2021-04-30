@@ -1,0 +1,5 @@
+numpy
+habanero
+scidownl
+lxml
+termcolor
