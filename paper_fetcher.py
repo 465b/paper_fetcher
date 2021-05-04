@@ -19,21 +19,21 @@ STD_WARNING = colored('[WARNING] ', 'yellow')
 STD_INPUT = colored('[INPUT] ', 'blue')
 
 
-def prepare_folders(output_folder='papers',mismatch_folder='mismatch',
+def prepare_folders(output_path,output_folder='papers',mismatch_folder='mismatch',
 					temp_folder='temp'):
 
 	try:
-		os.mkdir(output_folder)
+		os.mkdir(os.path.join(output_path,output_folder))
 	except FileExistsError:
 		pass
 
 	try:
-		os.mkdir(mismatch_folder)
+		os.mkdir(os.path.join(output_path,mismatch_folder))
 	except FileExistsError:
 		pass
 
 	try:
-		os.mkdir(temp_folder)
+		os.mkdir(os.path.join(output_path,temp_folder))
 	except FileExistsError:
 		files = os.listdir(temp_folder)
 		for file in files:
@@ -83,33 +83,44 @@ def fetch_doi_from_crossref(item):
 	return doi,title
 
 
-def download_from_scihub(item,naming_scheme='doi',
+def download_from_scihub(item,path,naming_scheme='doi',
 						 output_folder='papers',temp_folder='temp'):
 
 	doi = item['doi']
-	try:
-		SciHub(doi,temp_folder).download(choose_scihub_url_index=3)
-		path = os.getcwd()
-		filenames = os.listdir(os.path.join(path,temp_folder))
-		if naming_scheme == 'doi':
-			for filename in filenames:
-				os.rename(os.path.join(path,temp_folder, filename),
-					os.path.join(path,output_folder,doi.replace('/','_'))
-					+'.pdf')
-		elif naming_scheme =='title':
-			for filename in filenames:
-				os.rename(os.path.join(path,temp_folder, filename),
-					os.path.join(path,output_folder,item['title'].replace('/','_'))
-					+'.pdf')
-		return 0
-	
-	except AttributeError:
-		print(f'{STD_WARNING} Paper {doi} not found.')
-		return 1
+	temp = os.path.join(path,temp_folder)
+	output = os.path.join(path,output_folder)
+	server_reached = False
+	while server_reached == False:
+		try:
+			SciHub(doi,temp).download(choose_scihub_url_index=3)
+			
+			filenames = os.listdir(temp)
+			if naming_scheme == 'doi':
+				for filename in filenames:
+					os.rename(os.path.join(temp,filename),
+							  os.path.join(output,doi.replace('/','_'))+'.pdf')
+			elif naming_scheme =='title':
+				for filename in filenames:
+					os.rename(os.path.join(temp,filename),
+						os.path.join(output_folder,item['title'].replace('/','_'))
+						+'.pdf')
+			return 0
+		
+		except AttributeError as identifier:
+			server_reached = True
+			print(f'{STD_WARNING} Paper {doi} not found.')
+			return 1
 
-	except KeyError:
-		print(doi+" available on libgen")
-		return 2
+		except KeyError as identifier:
+			if identifier.args[0] == 'cache-control':
+				print(STD_WARNING + 'SciHub server not reached. Retrying...')
+				time.sleep(5)
+			else:
+				server_reached = True
+				print(f'{STD_WARNING} Paper {doi} not found.')
+				print(STD_WARNING + doi+" available on libgen")
+				return 2
+
 
 def prepare_titles_to_compare(title):
 	title = title.lower()
@@ -119,8 +130,10 @@ def prepare_titles_to_compare(title):
 
 	return title
 
+
 def string_similarity(a, b):
     return SequenceMatcher(None, a, b).ratio()
+
 
 def comparte_titles(data_title,query_title,verbose=True,similarity_threshold=0.9):
 
@@ -159,13 +172,15 @@ def load_data(path):
 	return record
 
 
-def download_papers(path,naming_scheme='doi',force_download=False,
+def download_papers(path,output_path=None,
+					naming_scheme='doi',force_download=False,
 					output_folder='papers',mismatch_folder='mismatch',
 					temp_folder='temp'):
 
-
+	if output_path is None:
+		output_path = os.getcwd()
 	#prepare folder structure for file storage and renaming
-	prepare_folders(output_folder,mismatch_folder,temp_folder)
+	prepare_folders(output_path,output_folder,mismatch_folder,temp_folder)
 
 	# load the data set containting the papers which shall be downloaded
 	record = load_data(path)
@@ -186,24 +201,26 @@ def download_papers(path,naming_scheme='doi',force_download=False,
 
 			if item['cr_output_code'] == 0:
 				# doi found - trying to fetch from scihub
-				item['scihub_output_code'] = download_from_scihub(item,naming_scheme,
-														output_folder,temp_folder)
+				item['scihub_output_code'] = \
+					download_from_scihub(item,output_path,naming_scheme,
+										 output_folder,temp_folder)
 
 				# writes down that paper couldn't be downloaded
 				if item['scihub_output_code'] != 0:
-					write.writerow(['SciHub',item['title']])
+					write.writerow([ii,'SciHub',item['title']])
 
 			if item['cr_output_code'] != 0:
 				# writes down that paper wasn't found on crossref
-				write.writerow(['CrossRef',item['title']])
+				write.writerow([ii,'CrossRef',item['title']])
 				if force_download == True:
 					item['scihub_output_code'] = \
-						download_from_scihub(item,naming_scheme,
-							output_folder=mismatch_folder,temp_folder=temp_folder)
+						download_from_scihub(item,output_path,naming_scheme,
+											 output_folder=mismatch_folder,
+											 temp_folder=temp_folder)
 
 					# writes down that paper couldn't be downloaded
 					if item['scihub_output_code'] != 0:
-						write.writerow(['SciHub',item['title']])
+						write.writerow([ii,'SciHub',item['title']])
 				else:	
 					# doi not found - skipping download attempt
 					pass
@@ -212,7 +229,7 @@ def download_papers(path,naming_scheme='doi',force_download=False,
 			# Handles corrupt items in input data
 			print(STD_WARNING + "Corrupted data line. Logged.")
 			print(STD_WARNING + identifier)
-			write.writerow('Corrupt Data',str(ii))
+			write.writerow(ii,'Corrupt Data',' ')
 
 		g.close()
 
