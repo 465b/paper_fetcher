@@ -19,6 +19,25 @@ STD_WARNING = colored('[WARNING] ', 'yellow')
 STD_INPUT = colored('[INPUT] ', 'blue')
 
 
+#def slugify(value, allow_unicode=False):
+#    """
+#    Taken from https://github.com/django/django/blob/master/django/utils/text.py
+#    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+#    dashes to single dashes. Remove characters that aren't alphanumerics,
+#    underscores, or hyphens. Convert to lowercase. Also strip leading and
+#    trailing whitespace, dashes, and underscores.
+#    """
+#    value = str(value)
+#    if allow_unicode:
+#        value = unicodedata.normalize('NFKC', value)
+#    else:
+#        value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
+#    value = re.sub(r'[^\w\s-]', '', value.lower())
+#    return re.sub(r'[-\s]+', '-', value).strip('-_')
+
+
+
+
 def prepare_folders(output_path,output_folder='papers',mismatch_folder='mismatch',
 					temp_folder='temp'):
 
@@ -78,7 +97,11 @@ def fetch_doi_from_crossref(item):
 			print(STD_WARNING + "CrossRef server unavailable. Retry in 5 seconds")
 			time.sleep(5)
 
-	title = query_result['message']['items'][0]['title'][0]
+	try:
+		title = query_result['message']['items'][0]['title'][0]
+	except KeyError:
+		title = 'None'
+	
 	doi = query_result['message']['items'][0]['DOI']
 	return doi,title
 
@@ -120,6 +143,11 @@ def download_from_scihub(item,path,naming_scheme='doi',
 				print(f'{STD_WARNING} Paper {doi} not found.')
 				print(STD_WARNING + doi+" available on libgen")
 				return 2
+		
+		except ConnectionError as identifier:
+			print(STD_WARNING + 'SciHub server not reached. Retrying...')
+			time.sleep(5)
+		
 
 
 def prepare_titles_to_compare(title):
@@ -174,7 +202,7 @@ def load_data(path):
 
 def download_papers(path,output_path=None,
 					naming_scheme='doi',force_download=False,
-					output_folder='papers',mismatch_folder='mismatch',
+					output_folder='match',mismatch_folder='mismatch',
 					temp_folder='temp'):
 
 	if output_path is None:
@@ -186,57 +214,74 @@ def download_papers(path,output_path=None,
 	record = load_data(path)
 	
 	for ii,item in enumerate(record):
-		print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
+			print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
 
-		# logging
-		g = open('unsuccessful_lookups.csv','a')
-		write = csv.writer(g)
+			# logging
+			f = open('full_log.csv','a')
+			log = csv.writer(f)
 
-		try:
-			item['doi'],item['cr_title'] = fetch_doi_from_crossref(item)
-		
-			# this is a very basic way to check if the papers match
-			# doesn't work (when it should) e.g if any special characters are present
-			item['cr_output_code'] = comparte_titles(item['title'],item['cr_title'])
+			try:
+				item['doi'],item['cr_title'] = fetch_doi_from_crossref(item)
 
-			if item['cr_output_code'] == 0:
-				# doi found - trying to fetch from scihub
-				item['scihub_output_code'] = \
-					download_from_scihub(item,output_path,naming_scheme,
-										 output_folder,temp_folder)
+				# this is a very basic way to check if the papers match
+				# doesn't work (when it should) e.g if any special characters are present
+				item['cr_output_code'] = comparte_titles(item['title'],item['cr_title'])
 
-				# writes down that paper couldn't be downloaded
-				if item['scihub_output_code'] != 0:
-					write.writerow([ii,'SciHub',item['title']])
-
-			if item['cr_output_code'] != 0:
-				# writes down that paper wasn't found on crossref
-				write.writerow([ii,'CrossRef',item['title']])
-				if force_download == True:
+				if item['cr_output_code'] == 0:
+					# doi found - trying to fetch from scihub
 					item['scihub_output_code'] = \
 						download_from_scihub(item,output_path,naming_scheme,
-											 output_folder=mismatch_folder,
-											 temp_folder=temp_folder)
+											 output_folder,temp_folder)
+					log.writerow([ii,'CrossRef','success',item['title'],
+							      item['authors'],item['journal'],
+								  item['abstract']])
 
 					# writes down that paper couldn't be downloaded
 					if item['scihub_output_code'] != 0:
-						write.writerow([ii,'SciHub',item['title']])
-				else:	
-					# doi not found - skipping download attempt
-					pass
+						log.writerow([ii,'SciHub','error',item['title'],
+								      item['authors'],item['journal'],
+									  item['abstract']])
+					else:
+						log.writerow([ii,'SciHub','success',item['title'],
+								      item['authors'],item['journal'],
+									  item['abstract']])
 
-		except TypeError as identifier:
-			# Handles corrupt items in input data
-			print(STD_WARNING + "Corrupted data line. Logged.")
-			print(STD_WARNING + identifier)
-			write.writerow(ii,'Corrupt Data',' ')
+				if item['cr_output_code'] != 0:
+					# writes down that paper wasn't found on crossref
+					log.writerow([ii,'CrossRef','error',item['title'],
+							      item['authors'],item['journal'],
+								  item['abstract']])
+					if force_download == True:
+						item['scihub_output_code'] = \
+							download_from_scihub(item,output_path,naming_scheme,
+												 output_folder=mismatch_folder,
+												 temp_folder=temp_folder)
 
-		g.close()
+						# writes down that paper couldn't be downloaded
+						if item['scihub_output_code'] != 0:
+							log.writerow([ii,'SciHub','error',item['title'],
+							      item['authors'],item['journal'],
+								  item['abstract']])
+						else:
+							log.writerow([ii,'SciHub','success',item['title'],
+							      item['authors'],item['journal'],
+								  item['abstract']])
+					else:	
+						# doi not found - skipping download attempt
+						pass
+
+			except TypeError as identifier:
+				# Handles corrupt items in input data
+				print(STD_WARNING + "Corrupted data line. Logged.")
+				print(STD_WARNING + identifier)
+				log.writerow(ii,'Corrupt Data',' ')
+
+			f.close()
 
 	clean_up()
 
 
 
 if __name__ == "__main__":
-	path = "demo_data/test.csv"
+	path = "demo_data/third_test.csv"
 	download_papers(path,naming_scheme='title',force_download=True)
