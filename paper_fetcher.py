@@ -106,7 +106,7 @@ def fetch_doi_from_crossref(item):
 	return doi,title
 
 
-def download_from_scihub(item,path,naming_scheme='doi',
+def download_from_scihub(item,path,export_naming_scheme='doi',
 						 output_folder='papers',temp_folder='temp'):
 
 	doi = item['doi']
@@ -118,11 +118,11 @@ def download_from_scihub(item,path,naming_scheme='doi',
 			SciHub(doi,temp).download(choose_scihub_url_index=3)
 			
 			filenames = os.listdir(temp)
-			if naming_scheme == 'doi':
+			if export_naming_scheme == 'doi':
 				for filename in filenames:
 					os.rename(os.path.join(temp,filename),
 							  os.path.join(output,doi.replace('/','_'))+'.pdf')
-			elif naming_scheme =='title':
+			elif export_naming_scheme =='title':
 				for filename in filenames:
 					os.rename(os.path.join(temp,filename),
 						os.path.join(output_folder,item['title'].replace('/','_'))
@@ -201,24 +201,27 @@ def load_data(path):
 
 
 def download_papers(path,output_path=None,
-					naming_scheme='doi',force_download=False,
-					output_folder='match',mismatch_folder='mismatch',
-					temp_folder='temp'):
+					export_naming_scheme='doi', import_naming_scheme='title',
+					force_download=False, output_folder='match',
+					mismatch_folder='mismatch', temp_folder='temp'):
 
 	if output_path is None:
 		output_path = os.getcwd()
 	#prepare folder structure for file storage and renaming
 	prepare_folders(output_path,output_folder,mismatch_folder,temp_folder)
 
+	
 	# load the data set containting the papers which shall be downloaded
 	record = load_data(path)
-	
-	for ii,item in enumerate(record):
-			print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
 
-			# logging
-			f = open('full_log.csv','a')
-			log = csv.writer(f)
+	for ii,item in enumerate(record):
+		print(STD_INFO + colored('#'+str(ii), attrs=['bold']))
+
+		# logging
+		f = open('full_log.csv','a')
+		log = csv.writer(f)
+
+		if import_naming_scheme == 'title':
 
 			try:
 				item['doi'],item['cr_title'] = fetch_doi_from_crossref(item)
@@ -230,42 +233,42 @@ def download_papers(path,output_path=None,
 				if item['cr_output_code'] == 0:
 					# doi found - trying to fetch from scihub
 					item['scihub_output_code'] = \
-						download_from_scihub(item,output_path,naming_scheme,
-											 output_folder,temp_folder)
+						download_from_scihub(item,output_path,export_naming_scheme,
+											output_folder,temp_folder)
 					log.writerow([ii,'CrossRef','success',item['title'],
-							      item['authors'],item['journal'],
-								  item['abstract']])
+								item['authors'],item['journal'],
+								item['abstract']])
 
 					# writes down that paper couldn't be downloaded
 					if item['scihub_output_code'] != 0:
 						log.writerow([ii,'SciHub','error',item['title'],
-								      item['authors'],item['journal'],
-									  item['abstract']])
+									item['authors'],item['journal'],
+									item['abstract']])
 					else:
 						log.writerow([ii,'SciHub','success',item['title'],
-								      item['authors'],item['journal'],
-									  item['abstract']])
+									item['authors'],item['journal'],
+									item['abstract']])
 
 				if item['cr_output_code'] != 0:
 					# writes down that paper wasn't found on crossref
 					log.writerow([ii,'CrossRef','error',item['title'],
-							      item['authors'],item['journal'],
-								  item['abstract']])
+								item['authors'],item['journal'],
+								item['abstract']])
 					if force_download == True:
 						item['scihub_output_code'] = \
-							download_from_scihub(item,output_path,naming_scheme,
-												 output_folder=mismatch_folder,
-												 temp_folder=temp_folder)
+							download_from_scihub(item,output_path,export_naming_scheme,
+												output_folder=mismatch_folder,
+												temp_folder=temp_folder)
 
 						# writes down that paper couldn't be downloaded
 						if item['scihub_output_code'] != 0:
 							log.writerow([ii,'SciHub','error',item['title'],
-							      item['authors'],item['journal'],
-								  item['abstract']])
+								item['authors'],item['journal'],
+								item['abstract']])
 						else:
 							log.writerow([ii,'SciHub','success',item['title'],
-							      item['authors'],item['journal'],
-								  item['abstract']])
+								item['authors'],item['journal'],
+								item['abstract']])
 					else:	
 						# doi not found - skipping download attempt
 						pass
@@ -276,7 +279,21 @@ def download_papers(path,output_path=None,
 				print(STD_WARNING + identifier)
 				log.writerow(ii,'Corrupt Data',' ')
 
-			f.close()
+				f.close()
+
+		elif import_naming_scheme == 'doi':
+			item['scihub_output_code'] = \
+						download_from_scihub(item,output_path,export_naming_scheme,
+											output_folder,temp_folder)
+			# writes down that paper couldn't be downloaded
+			if item['scihub_output_code'] != 0:
+				log.writerow([ii,'SciHub','error',item['title'],
+							item['authors'],item['journal'],
+							item['abstract']])
+			else:
+				log.writerow([ii,'SciHub','success',item['title'],
+							item['authors'],item['journal'],
+							item['abstract']])
 
 	clean_up()
 
@@ -284,4 +301,4 @@ def download_papers(path,output_path=None,
 
 if __name__ == "__main__":
 	path = "demo_data/third_test.csv"
-	download_papers(path,naming_scheme='title',force_download=True)
+	download_papers(path,export_naming_scheme='title',force_download=True)
